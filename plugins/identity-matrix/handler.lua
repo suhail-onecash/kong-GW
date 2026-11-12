@@ -565,17 +565,9 @@ function IdentityMatrix:access(conf)
       input_region = "NORTH"
     end
 
-    -- First account registration requires valid region
-    if not isNorthExisted and not isSouthExisted then
-      if not input_region or (input_region ~= "NORTH" and input_region ~= "SOUTH") then
-        red:set_keepalive()
-        return kong.response.exit(400, {
-          status = false,
-          errorCode = "REG-ID-001",
-          message = "Target region is required (NORTH or SOUTH)"
-        })
-      end
-    end
+    -- First account registration: region is taken from the X-Region header or
+    -- the request body (extract_target_region above). It is no longer mandatory
+    -- here — when absent the request simply proceeds with default routing.
 
     -- AC-20: Idempotency lock to prevent duplicate registration
     local lock_key = "lock:reg:" .. msisdn
@@ -590,19 +582,26 @@ function IdentityMatrix:access(conf)
       })
     end
 
-    local target_upstream = (input_region == "NORTH") and conf.north_upstream or conf.south_upstream
-    local set_ok, set_err = kong.service.set_upstream(target_upstream)
-    if not set_ok then
-      kong.log.err("identity-matrix: set_upstream failed for ", target_upstream, ": ", set_err)
-      return kong.response.exit(503, {
-        status = false,
-        errorCode = "SW_008",
-        message = "Backend routing unavailable"
-      })
+    -- Route to the region backend only when a region was provided (header/body).
+    -- When no region came in with the request (first registration), skip the
+    -- override so the request uses the service's configured default upstream.
+    if input_region then
+      local target_upstream = (input_region == "NORTH") and conf.north_upstream or conf.south_upstream
+      local set_ok, set_err = kong.service.set_upstream(target_upstream)
+      if not set_ok then
+        kong.log.err("identity-matrix: set_upstream failed for ", target_upstream, ": ", set_err)
+        return kong.response.exit(503, {
+          status = false,
+          errorCode = "SW_008",
+          message = "Backend routing unavailable"
+        })
+      end
     end
 
     if conf.send_trusted_headers then
-      kong.service.request.set_header("X-Region", input_region)
+      if input_region then
+        kong.service.request.set_header("X-Region", input_region)
+      end
       if passport and passport.guid then
         kong.service.request.set_header("X-Passport-Guid", tostring(passport.guid))
       end

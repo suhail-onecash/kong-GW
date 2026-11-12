@@ -143,13 +143,13 @@ Same ordered steps as §2, but the request goes to `/AGENT/**` → served by `pa
 **Ordered steps**
 1. Run §1 pre-check to learn `registration.allowedRegions`.
 2. Build request: `POST {baseUrl}/NWC/rest/register`
-   - Headers: `X-MSISDN`, `X-Device-Id`, `X-Target-Region: NORTH|SOUTH` (**mandatory for a first account** — no wallet exists yet, so the opposite-region rule can't infer it)
+   - Headers: `X-MSISDN`, `X-Device-Id`, `X-Region: NORTH|SOUTH` (also accepted: `X-Target-Region`, query `region`, or body `region`/`targetRegion` — for a first account the gateway reads the region from the header or body, but it is **no longer mandatory**: when absent the request is forwarded with default routing)
    - Body: registration/KYC JSON (owned by the backend; Kong only guards at the edge). MSISDN may also come from body `username`.
 3. Gateway guard order (fail-fast — all close the request before the backend):
    1. Any wallet `SUSPENDED`/`AML_BLOCKED` → **403 `REG-ID-013`** (create-to-bypass ban, PDF §2.4).
    2. Both regions exist non-terminated → **409 `REG-ID-012`** "…maximum number of accounts…" (2-wallet cap, Scenario 8).
    3. Existing north + asking `NORTH` (or south + asking `SOUTH`) → **400 `REG-ID-012`** "You already have an account in this region." (opposite-region rule; the gateway *forces* the input to the valid region otherwise).
-   4. First account with no valid region → **400 `REG-ID-001`** "Target region is required".
+   4. First account with no region in header/body → **not rejected** — forwarded to the default upstream (identity-svc → `north-backend`), no `X-Region` injected.
    5. Idempotency lock `lock:reg:<msisdn>` (10 s TTL, `SET NX EX`) → duplicate submit within 10 s → **429 `PIN-017`**.
 4. Otherwise: upstream set to region backend + `X-Region`, `X-Passport-Guid`, `X-Device-Id` injected → forwarded.
 
