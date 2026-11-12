@@ -1,0 +1,6 @@
+.env
+.env.local
+*.env
+
+# Generated / rendered config (do not commit)
+kong.yml

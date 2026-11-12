@@ -1,0 +1,19 @@
+{
+  "NORTH_CUSTOMER_TARGET": "10.200.31.18:8080",
+  "SOUTH_CUSTOMER_TARGET": "10.200.114.22:8080",
+  "NORTH_AGENT_TARGET": "10.200.31.20:8080",
+  "SOUTH_AGENT_TARGET": "10.200.114.25:8080",
+  "REDIS_HOST": "host.docker.internal",
+  "RESPONSE_TRANSFORM_ENABLED": "true",
+  "ADD_REGION_RESPONSE_HEADER": "true",
+  "NORTH_FIELD_MAP":  "{}",
+  "SOUTH_FIELD_MAP":  "{}",
+  "NORTH_ADD_FIELDS": "{\"served_byNorth\":\"north\",\"region_code\":\"N\",\"response_region\":\"{region}\",\"request_msisdn\":\"{msisdn}\",\"account_id\":\"{accountId}\"}",
+  "SOUTH_ADD_FIELDS": "{\"served_bySouth\":\"south\",\"region_code\":\"S\",\"env\":\"priv\",\"response_region\":\"{region}\",\"request_msisdn\":\"{msisdn}\",\"account_id\":\"{accountId}\"}",
+  "NORTH_DELETE_FIELDS": "[\"internal_id\",\"debug_token\"]",
+  "SOUTH_DELETE_FIELDS": "[\"legacy_code\",\"temp_flag\",\"debug_token\"]",
+  "NORTH_ADD_HEADERS": "{\"X-North-Header\":\"north-value\",\"X-RegionAcc-Id\":\"{accountId}\"}",
+  "SOUTH_ADD_HEADERS": "{\"X-South-Header\":\"south-value\",\"X-RegionAcc-Id\":\"{accountId}\"}",
+  "NORTH_DELETE_HEADERS": "[\"X-Backend-Internal\",\"X-Debug\"]",
+  "SOUTH_DELETE_HEADERS": "[\"X-Backend-Internal\",\"X-Debug\",\"X-Temp\"]"
+}

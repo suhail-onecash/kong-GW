@@ -1,0 +1,517 @@
+{
+	"info": {
+		"_postman_id": "b7e1c2d4-9a3f-4c8e-b5d6-1f2a3b4c5d6e",
+		"name": "Kong4 Gateway — ONE Cash APIs",
+		"description": "Postman collection for all APIs exposed by the Kong4 DB-less Kong gateway (port 8000).\n\nGenerated from `kong.yml` (services + routes) and the custom plugins in `plugins/`:\n\n| Service | Route(s) | Plugin |\n|---|---|---|\n| customer-svc | `/NWC/*` | passport-router (routes North/South by Redis passport) |\n| agent-svc | `/AGENT/*` | passport-router |\n| payment-svc | `/payment/transfer` | payment-transfer (North debit → South credit with reversal) |\n| dual-login-svc | `/login2`, `/auth/login2` | dual-login |\n| identity-svc | `/NWC/rest/Login`, `/NWC/rest/register`, `/NWC/rest/identity/check` | identity-matrix |\n| switch-svc | `/switch/*` + `/NWC/rest/switch/*`, `/NWC/rest/register/second-account` | switch-account |\n\n**Common headers**\n- `X-MSISDN` — customer phone number (required by most plugins)\n- `X-Device-Id` — device hardware/app UUID\n- `X-Target-Region` — `NORTH` or `SOUTH`\n- `X-Transaction-Id` — optional idempotency key for payment transfers\n\nSwitchAccount error codes: `SW_001`..`SW_008`, registration codes `REG-ID-*`, idempotency `PIN-017`. See `SWITCH_ACCOUNT_DOCUMENTATION.md`.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "kong4"
+	},
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:8000",
+			"type": "string"
+		},
+		{
+			"key": "msisdn",
+			"value": "967700000001",
+			"type": "string"
+		},
+		{
+			"key": "deviceId",
+			"value": "DEVICE-IPHONE-14",
+			"type": "string"
+		},
+		{
+			"key": "targetRegion",
+			"value": "SOUTH",
+			"type": "string"
+		},
+		{
+			"key": "amount",
+			"value": "100",
+			"type": "string"
+		},
+		{
+			"key": "currency",
+			"value": "USD",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "Customer — /NWC (customer-svc, passport-router)",
+			"description": "Customer wallet APIs. The `passport-router` plugin (priority 900) reads the Redis passport `passport:<X-MSISDN>`, resolves the device default / region, and routes to `north-backend` (10.200.31.18:8080) or `south-backend` (10.200.114.22:8080). Responses are transformed per region (region fields added, internal fields/headers scrubbed).",
+			"item": [
+				{
+					"name": "Login",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "X-MSISDN", "value": "{{msisdn}}" },
+							{ "key": "X-Device-Id", "value": "{{deviceId}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"appVersion\": 18,\n  \"username\": \"{{msisdn}}\",\n  \"pass\": \"7+QEKk8L5/XLlPqLztdIng==\",\n  \"timeStp\": \"04-11-2026 23:13:04.900\",\n  \"device\": \"{{deviceId}}\",\n  \"otherinfo\": \"Xiaomi#22101316C#Redmi Note 12 Pro\",\n  \"hash\": \"5B9CDE4F4F2947129ABD9306EF600054EE859B0DD264690D9A5C5A0805174615\",\n  \"otp\": null,\n  \"rot\": 0,\n  \"dvir\": 1,\n  \"userId\": null\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/NWC/rest/Login",
+							"host": ["{{baseUrl}}"],
+							"path": ["NWC", "rest", "Login"]
+						},
+						"description": "Customer login via `/NWC/rest/Login`. Guarded by `identity-matrix` (priority 950) then routed by `passport-router`. Body shape matches the sample payload in `plugins/dual-login/south_payload.json`."
+					},
+					"response": []
+				},
+				{
+					"name": "Register",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "X-MSISDN", "value": "{{msisdn}}" },
+							{ "key": "X-Device-Id", "value": "{{deviceId}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"username\": \"{{msisdn}}\",\n  \"device\": \"{{deviceId}}\",\n  \"appVersion\": 18\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/NWC/rest/register",
+							"host": ["{{baseUrl}}"],
+							"path": ["NWC", "rest", "register"]
+						},
+						"description": "First-account registration. `identity-matrix` enforces registration guards (missing `X-MSISDN` → `REG-ID-001`), then the request is routed to the region backend."
+					},
+					"response": []
+				},
+				{
+					"name": "Identity Check (pre-check)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{ "key": "X-MSISDN", "value": "{{msisdn}}" },
+							{ "key": "X-Target-Region", "value": "{{targetRegion}}" }
+						],
+						"url": {
+							"raw": "{{baseUrl}}/NWC/rest/identity/check",
+							"host": ["{{baseUrl}}"],
+							"path": ["NWC", "rest", "identity", "check"]
+						},
+						"description": "Identity pre-check endpoint guarded by `identity-matrix`. `X-Target-Region` selects NORTH/SOUTH."
+					},
+					"response": []
+				},
+				{
+					"name": "Generic NWC passthrough",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "X-MSISDN", "value": "{{msisdn}}" },
+							{ "key": "X-Device-Id", "value": "{{deviceId}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"example\": \"any /NWC/** path is forwarded with strip_path=false\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/NWC/rest/your-backend-endpoint",
+							"host": ["{{baseUrl}}"],
+							"path": ["NWC", "rest", "your-backend-endpoint"]
+						},
+						"description": "Any other `/NWC/**` path is forwarded as-is to the region backend chosen by `passport-router`. Edit the path to hit a specific backend endpoint (balance, transfers, etc.)."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Agent — /AGENT (agent-svc, passport-router)",
+			"description": "Agent wallet APIs. Same `passport-router` behavior as customer, but routes to `north-agent-backend` (10.200.31.20:8080) or `south-agent-backend` (10.200.114.25:8080).",
+			"item": [
+				{
+					"name": "Agent Login",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "X-MSISDN", "value": "{{msisdn}}" },
+							{ "key": "X-Device-Id", "value": "{{deviceId}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"appVersion\": 18,\n  \"username\": \"{{msisdn}}\",\n  \"pass\": \"7+QEKk8L5/XLlPqLztdIng==\",\n  \"timeStp\": \"04-11-2026 23:13:04.900\",\n  \"device\": \"{{deviceId}}\",\n  \"otherinfo\": \"Xiaomi#22101316C#Redmi Note 12 Pro\",\n  \"hash\": \"5B9CDE4F4F2947129ABD9306EF600054EE859B0DD264690D9A5C5A0805174615\",\n  \"otp\": null,\n  \"rot\": 0,\n  \"dvir\": 1,\n  \"userId\": null\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/AGENT/rest/Login",
+							"host": ["{{baseUrl}}"],
+							"path": ["AGENT", "rest", "Login"]
+						},
+						"description": "Agent login via `/AGENT/rest/Login`. Any `/AGENT/**` path is forwarded with `strip_path=false`."
+					},
+					"response": []
+				},
+				{
+					"name": "Generic AGENT passthrough",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "X-MSISDN", "value": "{{msisdn}}" },
+							{ "key": "X-Device-Id", "value": "{{deviceId}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"example\": \"any /AGENT/** path is forwarded with strip_path=false\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/AGENT/rest/your-backend-endpoint",
+							"host": ["{{baseUrl}}"],
+							"path": ["AGENT", "rest", "your-backend-endpoint"]
+						},
+						"description": "Any other `/AGENT/**` path forwarded to the region agent backend."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Payment Transfer (payment-svc)",
+			"description": "Cross-region money transfer orchestrated by the `payment-transfer` plugin: North debit (`/api/debit`) → South credit (`/api/credit`) → status check → reversal on failure (`/api/debit/reverse`).\n\nBody fields: `senderMsisdn` (or `northMsisdn`/`fromMsisdn`), `receiverMsisdn` (or `southMsisdn`/`toMsisdn`), `amount` (> 0), `currency` (default `USD`). Idempotency key from `X-Transaction-Id` header or `transactionId`/`txId` body field; generated UUID otherwise.",
+			"item": [
+				{
+					"name": "Transfer North → South",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "X-Transaction-Id", "value": "tx-{{$timestamp}}" },
+							{ "key": "X-MSISDN", "value": "{{msisdn}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"senderMsisdn\": \"967700000001\",\n  \"receiverMsisdn\": \"967700000002\",\n  \"amount\": {{amount}},\n  \"currency\": \"{{currency}}\",\n  \"transactionId\": \"tx-{{$timestamp}}\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/payment/transfer",
+							"host": ["{{baseUrl}}"],
+							"path": ["payment", "transfer"]
+						},
+						"description": "POST only (405 otherwise). Validates JSON body, dedupes by transaction id via Redis (`tx_ttl_seconds`), then runs debit → credit → status → (reversal on failure)."
+					},
+					"response": []
+				},
+				{
+					"name": "Transfer (missing fields — validation demo)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"amount\": {{amount}}\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/payment/transfer",
+							"host": ["{{baseUrl}}"],
+							"path": ["payment", "transfer"]
+						},
+						"description": "Returns `400 {\"error\":\"Missing senderMsisdn\"}` / `Missing receiverMsisdn` — useful to verify gateway-side validation."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Dual Login (dual-login-svc)",
+			"description": "Second-factor login flow. The `dual-login` plugin routes to `north_login_path`/`south_login_path` (`/NWC/rest/Login` on either backend) and injects the South payload template (`plugins/dual-login/south_payload.json`) when routing to South.",
+			"item": [
+				{
+					"name": "Dual login (via /login2)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "X-MSISDN", "value": "{{msisdn}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"appVersion\": 18,\n  \"username\": \"{{msisdn}}\",\n  \"pass\": \"7+QEKk8L5/XLlPqLztdIng==\",\n  \"timeStp\": \"04-11-2026 23:13:04.900\",\n  \"device\": \"4f901f73878ec7f5\",\n  \"otherinfo\": \"Xiaomi#22101316C#Redmi Note 12 Pro\",\n  \"hash\": \"5B9CDE4F4F2947129ABD9306EF600054EE859B0DD264690D9A5C5A0805174615\",\n  \"otp\": null,\n  \"rot\": 0,\n  \"dvir\": 1,\n  \"userId\": null\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/login2",
+							"host": ["{{baseUrl}}"],
+							"path": ["login2"]
+						},
+						"description": "Login alternative route `/login2` (strip_path=false)."
+					},
+					"response": []
+				},
+				{
+					"name": "Dual login (via /auth/login2)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "X-MSISDN", "value": "{{msisdn}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"appVersion\": 18,\n  \"username\": \"{{msisdn}}\",\n  \"pass\": \"7+QEKk8L5/XLlPqLztdIng==\",\n  \"timeStp\": \"04-11-2026 23:13:04.900\",\n  \"device\": \"4f901f73878ec7f5\",\n  \"otherinfo\": \"Xiaomi#22101316C#Redmi Note 12 Pro\",\n  \"hash\": \"5B9CDE4F4F2947129ABD9306EF600054EE859B0DD264690D9A5C5A0805174615\",\n  \"otp\": null,\n  \"rot\": 0,\n  \"dvir\": 1,\n  \"userId\": null\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/auth/login2",
+							"host": ["{{baseUrl}}"],
+							"path": ["auth", "login2"]
+						},
+						"description": "Login alternative route `/auth/login2` (strip_path=false)."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Switch Account (switch-svc)",
+			"description": "Switch Account & Create New Account journeys (plugin priority 960). Reads the passport v2 store `passport:<msisdn>` with `profiles[]` and `deviceDefaults[]`.\n\nActions: `SWITCH`, `CREATE`, `FIRST_TIME_PIN_SETUP`, `SWITCH_AND_REPLACEMENT`, `BLOCKED`. Error codes: `SW_001`–`SW_008`, `REG-ID-012`, `REG-ID-013`, `PIN-017`. See `SWITCH_ACCOUNT_DOCUMENTATION.md`.",
+			"item": [
+				{
+					"name": "Journey Decision",
+					"request": {
+						"method": "GET",
+						"header": [
+							{ "key": "X-MSISDN", "value": "{{msisdn}}" },
+							{ "key": "X-Device-Id", "value": "{{deviceId}}" }
+						],
+						"url": {
+							"raw": "{{baseUrl}}/switch/decision",
+							"host": ["{{baseUrl}}"],
+							"path": ["switch", "decision"]
+						},
+						"description": "Evaluates linked wallets, statuses, PIN state and per-device default; returns the next action. Missing `X-MSISDN` → `REG-ID-001`. Blocked/AML wallet → `403 BLOCKED` (`SW_003`)."
+					},
+					"response": []
+				},
+				{
+					"name": "Switch — Authenticate to target wallet",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "X-MSISDN", "value": "{{msisdn}}" },
+							{ "key": "X-Device-Id", "value": "{{deviceId}}" },
+							{ "key": "X-Target-Region", "value": "{{targetRegion}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pin\": \"1234\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/switch/authenticate",
+							"host": ["{{baseUrl}}"],
+							"path": ["switch", "authenticate"]
+						},
+						"description": "Routes authentication to the target region backend (`X-Target-Region` = NORTH/SOUTH). Rejects restricted wallets (`SW_003`) and uninitialized PIN (`SW_005`). Injects trusted headers `X-Region`, `X-Account-Id`, `X-Persona`, `X-Passport-Guid`."
+					},
+					"response": []
+				},
+				{
+					"name": "Set per-device default wallet",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "X-MSISDN", "value": "{{msisdn}}" },
+							{ "key": "X-Device-Id", "value": "{{deviceId}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"deviceId\": \"{{deviceId}}\",\n  \"targetRegion\": \"{{targetRegion}}\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/switch/set-default",
+							"host": ["{{baseUrl}}"],
+							"path": ["switch", "set-default"]
+						},
+						"description": "Persists the per-device preferred wallet (AC-11) into `deviceDefaults[]` in Redis. Success: `{\"status\":true,\"message\":\"Default wallet updated for this device\",...}`."
+					},
+					"response": []
+				},
+				{
+					"name": "Create second account",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "X-MSISDN", "value": "{{msisdn}}" },
+							{ "key": "X-Device-Id", "value": "{{deviceId}}" },
+							{ "key": "X-Target-Region", "value": "{{targetRegion}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"note\": \"KYC payload is owned by the backend; Kong enforces edge guards only\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/switch/create",
+							"host": ["{{baseUrl}}"],
+							"path": ["switch", "create"]
+						},
+						"description": "Guarded entry for the second regional wallet. Edge checks: max 2 wallets per MSISDN (`409 REG-ID-012`), opposite-region only (`400 REG-ID-012`), suspended/AML (`403 REG-ID-013`), idempotency lock 10s (`429 PIN-017`)."
+					},
+					"response": []
+				},
+				{
+					"name": "Journey Decision (NWC path)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{ "key": "X-MSISDN", "value": "{{msisdn}}" },
+							{ "key": "X-Device-Id", "value": "{{deviceId}}" }
+						],
+						"url": {
+							"raw": "{{baseUrl}}/NWC/rest/switch/decision",
+							"host": ["{{baseUrl}}"],
+							"path": ["NWC", "rest", "switch", "decision"]
+						},
+						"description": "Alias of `GET /switch/decision` under the `/NWC` prefix (backend-compatible path)."
+					},
+					"response": []
+				},
+				{
+					"name": "Switch — Authenticate (NWC path)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "X-MSISDN", "value": "{{msisdn}}" },
+							{ "key": "X-Device-Id", "value": "{{deviceId}}" },
+							{ "key": "X-Target-Region", "value": "{{targetRegion}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pin\": \"1234\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/NWC/rest/switch/authenticate",
+							"host": ["{{baseUrl}}"],
+							"path": ["NWC", "rest", "switch", "authenticate"]
+						},
+						"description": "Alias of `POST /switch/authenticate` under the `/NWC` prefix."
+					},
+					"response": []
+				},
+				{
+					"name": "Set per-device default wallet (NWC path)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "X-MSISDN", "value": "{{msisdn}}" },
+							{ "key": "X-Device-Id", "value": "{{deviceId}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"deviceId\": \"{{deviceId}}\",\n  \"targetRegion\": \"{{targetRegion}}\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/NWC/rest/switch/set-default",
+							"host": ["{{baseUrl}}"],
+							"path": ["NWC", "rest", "switch", "set-default"]
+						},
+						"description": "Alias of `POST /switch/set-default` under the `/NWC` prefix."
+					},
+					"response": []
+				},
+				{
+					"name": "Create second account (NWC path)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "X-MSISDN", "value": "{{msisdn}}" },
+							{ "key": "X-Device-Id", "value": "{{deviceId}}" },
+							{ "key": "X-Target-Region", "value": "{{targetRegion}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"note\": \"KYC payload is owned by the backend; Kong enforces edge guards only\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": {
+							"raw": "{{baseUrl}}/NWC/rest/register/second-account",
+							"host": ["{{baseUrl}}"],
+							"path": ["NWC", "rest", "register", "second-account"]
+						},
+						"description": "Alias of `POST /switch/create` under the `/NWC` prefix (`/NWC/rest/register/second-account`)."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Kong Admin (localhost:8001)",
+			"description": "Admin API is published on port 8001 (`KONG_ADMIN_LISTEN: 0.0.0.0:8001`). Useful for hot-reloading the declarative config and inspecting routes.",
+			"item": [
+				{
+					"name": "Hot-reload declarative config",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "file",
+									"type": "file",
+									"src": "C:/projects/kongs projects/kong4/kong.yml"
+								}
+							]
+						},
+						"url": {
+							"raw": "http://localhost:8001/config",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8001",
+							"path": ["config"]
+						},
+						"description": "Reload `kong.yml` into the running DB-less gateway without restarting: `POST /config` with the file as multipart form data."
+					},
+					"response": []
+				},
+				{
+					"name": "List services",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:8001/services",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8001",
+							"path": ["services"]
+						},
+						"description": "Lists all configured services (customer-svc, agent-svc, payment-svc, dual-login-svc, identity-svc, switch-svc)."
+					},
+					"response": []
+				}
+			]
+		}
+	]
+}

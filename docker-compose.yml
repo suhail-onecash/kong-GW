@@ -1,0 +1,151 @@
+# DB-less Kong gateway with the passport-router plugin, wired to the per-environment
+# render flow (kong.yml.tpl + vars.<env>.json -> kong.yml).
+# This file lives INSIDE the kong folder and every path in it is relative to that folder.
+#
+# Run it from the kong folder:
+#   cd C:\projects\kafka-consumer\kong
+#   docker compose up -d                  first run: builds the tiny render image, renders dev kong.yml, starts Kong
+#   KONG_ENV=priv docker compose up -d    same for the priv environment (vars.priv.json)
+#   KONG_ENV=prod docker compose up -d    prod (placeholders warn - fill real hostnames first)
+#   docker compose run --rm render        only (re-)render kong.yml, Kong untouched
+#
+# (Or invoke from the repo root with:  docker compose -f kong\docker-compose.yml ... )
+#
+# Hot-reload a freshly rendered config into the running gateway without restarting it
+# (from the repo root):
+#   curl -X POST http://localhost:8001/config -F "file=@kong/kong.yml"
+#
+# Kong sees only the rendered kong.yml and the plugin sources - the template and
+# vars files never enter the container.
+#
+# NOTE: if you previously started the gateway with the bare `docker run` command,
+# remove it first - this composes file reuses the same container name:
+#   docker rm -f kong-gateway
+
+services:
+  # One-shot init: expands kong.yml.tpl with vars.$KONG_ENV.json into kong.yml before
+  # Kong starts.
+  render:
+    build:
+      context: .
+      dockerfile: render.Dockerfile
+    image: kong-passport-render
+    working_dir: /work
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -eu
+        KENV="$$KONG_ENV"
+        VARS="kong/vars.$$KENV.json"
+
+        echo "rendering kong/kong.yml (env: $$KENV, vars: $$VARS)"
+        [ -f "$$VARS" ] || { echo "ERROR: vars file not found: $$VARS"; exit 1; }
+        [ -f kong/kong.yml.tpl ] || { echo "ERROR: template not found: kong/kong.yml.tpl"; exit 1; }
+
+        # Translate the selected vars file into shell exports, then into the
+        # envsubst substitution list ("_"-prefixed keys are skipped on both sides).
+        jq -r 'to_entries[] | select(.key | startswith("_") | not) | "\(.key)=\(.value|@sh)"' "$$VARS" > /tmp/env.sh
+        set -a; . /tmp/env.sh; set +a
+        LIST="$$(jq -r 'to_entries[] | select(.key | startswith("_") | not) | .key' "$$VARS" | sed 's/.*/$${&}/' | tr '\n' ' ')"
+
+        envsubst "$$LIST" < kong/kong.yml.tpl > /tmp/kong.yml
+
+        # Fail loudly if any token was not covered by the vars file (comment lines excluded).
+        LEFTOVER="$$(sed '/^[[:space:]]*#/d' /tmp/kong.yml | grep -oE '[$$][{][A-Za-z_][A-Za-z0-9_]*[}]' || true)"
+        if [ -n "$$LEFTOVER" ]; then
+          echo "ERROR: unexpanded tokens remain (missing keys in $$VARS?):"
+          echo "$$LEFTOVER" | sort -u
+          exit 1
+        fi
+
+        cp /tmp/kong.yml kong/kong.yml
+        echo "kong/kong.yml written ($$(wc -c < kong/kong.yml) bytes)"
+
+        STATUS="$$(jq -r '._status // empty' "$$VARS")"
+        case "$$STATUS" in
+          PLACEHOLDER*) echo "WARNING: $$VARS declares placeholder values - do not deploy: $$STATUS" ;;
+        esac
+    environment:
+      KONG_ENV: ${KONG_ENV:-priv}
+    volumes:
+      - .:/work/kong
+
+  kong:
+    build:
+      context: .
+      dockerfile: kong.Dockerfile
+    image: kong-passport-gateway
+    container_name: kong-gateway
+    restart: unless-stopped
+    depends_on:
+      render:
+        condition: service_completed_successfully
+    # Two ways to bring in the per-environment values:
+    #   1. JSON path (default, no env needed): the "render" one-shot produces
+    #      kong.yml from vars.<env>.json and KONG_DECLARATIVE_CONFIG points at it.
+    #   2. env path: set all five vars as environment variables
+    #      (docker compose environment pass-through, env-file, or your shell) and
+    #      the entrypoint below expands kong.yml.tpl AT CONTAINER START, so
+    #      kong.yml can stay templated with dollar-brace token names.
+    #   She'll example: NORTH_CUSTOMER_TARGET=... SOUTH_CUSTOMER_TARGET=... NORTH_AGENT_TARGET=...
+    #                  SOUTH_AGENT_TARGET=... REDIS_HOST=... docker compose up -d
+    environment:
+      KONG_DATABASE: off
+      # show kong.log.info(...) lines from the plugin (e.g. handler.lua:47 passport lookups)
+      KONG_LOG_LEVEL: "info"
+      KONG_PLUGINS: bundled,passport-router,payment-transfer,dual-login,identity-matrix,switch-account
+      # The kong image defaults admin_listen to 127.0.0.1 (container loopback only),
+      # which the published docker port can never reach - bind it to all interfaces.
+      KONG_ADMIN_LISTEN: "0.0.0.0:8001"
+      KONG_DECLARATIVE_CONFIG: /usr/local/kong/declarative/kong.yml
+      # Pass host-side env values straight into the container (empty = unused).
+      NORTH_CUSTOMER_TARGET: "${NORTH_CUSTOMER_TARGET:-}"
+      SOUTH_CUSTOMER_TARGET: "${SOUTH_CUSTOMER_TARGET:-}"
+      NORTH_AGENT_TARGET: "${NORTH_AGENT_TARGET:-}"
+      SOUTH_AGENT_TARGET: "${SOUTH_AGENT_TARGET:-}"
+      REDIS_HOST: "${REDIS_HOST:-}"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        # If all five env vars are set, render kong.yml from the template.
+        # Otherwise fall back to the pre-rendered file the "render" one-shot wrote.
+        if [ -n "$$NORTH_CUSTOMER_TARGET" ] && [ -n "$$SOUTH_CUSTOMER_TARGET" ] && \
+           [ -n "$$NORTH_AGENT_TARGET" ] && [ -n "$$SOUTH_AGENT_TARGET" ] && \
+           [ -n "$$REDIS_HOST" ]; then
+          envsubst '$$NORTH_CUSTOMER_TARGET $$SOUTH_CUSTOMER_TARGET $$NORTH_AGENT_TARGET $$SOUTH_AGENT_TARGET $$REDIS_HOST' \
+            < /usr/local/kong/declarative/kong.yml.tpl > /tmp/kong.rendered.yml
+
+          # Same guard as everywhere else: unexpanded tokens must fail loudly (comments excluded).
+          LEFTOVER="$$(sed '/^[[:space:]]*#/d' /tmp/kong.rendered.yml | grep -oE '[$][{][A-Za-z_][A-Za-z0-9_]*[}]' || true)"
+          if [ -n "$$LEFTOVER" ]; then
+            echo "ERROR: unexpanded tokens remain after envsubst:"
+            echo "$$LEFTOVER" | sort -u
+            exit 1
+          fi
+
+          export KONG_DECLARATIVE_CONFIG=/tmp/kong.rendered.yml
+          echo "rendered kong config from container env -> /tmp/kong.rendered.yml"
+        else
+          echo "no full env var set detected - using pre-rendered kong.yml from the render step"
+        fi
+        exec /docker-entrypoint.sh kong docker-start
+    ports:
+      - "8000:8000"
+      - "8443:8443"
+      - "8001:8001"
+    volumes:
+      - ./kong.yml:/usr/local/kong/declarative/kong.yml
+      # Template mounted so the container can self-render from env vars at start.
+      - ./kong.yml.tpl:/usr/local/kong/declarative/kong.yml.tpl
+      # Kong 3.8 requires the plugin as module "kong.plugins.<name>.handler" (see
+      # kong/db/dao/plugins.lua), so mount it into the default lua plugin tree as a
+      # single subfolder - this keeps all bundled plugins intact.
+      # NOTE: no extra_hosts host-gateway override here on purpose - Docker Desktop's
+      # own "host.docker.internal" alias/forwarder reaches services bound to the host
+      # loopback (e.g. Redis on 127.0.0.1:6379); "host-gateway" cannot.
+      - ./plugins/passport-router:/usr/local/share/lua/5.1/kong/plugins/passport-router
+      - ./plugins/payment-transfer:/usr/local/share/lua/5.1/kong/plugins/payment-transfer
+      - ./plugins/dual-login:/usr/local/share/lua/5.1/kong/plugins/dual-login
+      - ./plugins/identity-matrix:/usr/local/share/lua/5.1/kong/plugins/identity-matrix
+      - ./plugins/switch-account:/usr/local/share/lua/5.1/kong/plugins/switch-account

@@ -1,0 +1,19 @@
+{
+  "NORTH_CUSTOMER_TARGET": "host.docker.internal:8082",
+  "SOUTH_CUSTOMER_TARGET": "host.docker.internal:8080",
+  "NORTH_AGENT_TARGET": "host.docker.internal:8081",
+  "SOUTH_AGENT_TARGET": "host.docker.internal:9080",
+  "REDIS_HOST": "host.docker.internal",
+  "RESPONSE_TRANSFORM_ENABLED": "false",
+  "ADD_REGION_RESPONSE_HEADER": "false",
+  "NORTH_FIELD_MAP": "{}",
+  "SOUTH_FIELD_MAP": "{}",
+  "NORTH_ADD_FIELDS": "{}",
+  "SOUTH_ADD_FIELDS": "{}",
+  "NORTH_DELETE_FIELDS": "[]",
+  "SOUTH_DELETE_FIELDS": "[]",
+  "NORTH_ADD_HEADERS": "{}",
+  "SOUTH_ADD_HEADERS": "{}",
+  "NORTH_DELETE_HEADERS": "[]",
+  "SOUTH_DELETE_HEADERS": "[]"
+}
